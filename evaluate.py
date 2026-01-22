@@ -3,7 +3,7 @@ import os
 import argparse
 import logging
 from utils import get_gpt_response_openai
-
+import time
 
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -45,6 +45,7 @@ def check_cleansing(eval_system):
 
             if len(system_answers) != len(jsonlines): 
                 raise Exception(f'Check the {folder}-folder')
+
     return 
 
 def align_eval_input(eval_system):
@@ -59,16 +60,24 @@ def align_eval_input(eval_system):
                     if line != "":
                         system_answers.append(line.strip())
             
+            system_answers = system_answers[1:]
+            system_answers = system_answers[1::2]
+            
             jsonlines = open(f'./data/{folder}/{folder}_qa.jsonl', 'r').readlines()
             new_dict_list = []
-            for i, jsonline in enumerate(jsonlines):
+            loop_limit = min(len(jsonlines), len(system_answers))
+
+            for i in range(loop_limit):
                 system_ans = system_answers[i]
-                system_ans = system_ans.lstrip(f'{i+1}.').strip()
-                jsonline = json.loads(jsonline)
+                # Clean up any lingering numbering "1. ", "2. " from the answer string
+                # (Just in case the model put numbers on the answers too)
+                system_ans = system_ans.lstrip('0123456789. ').strip()
+                
+                jsonline = json.loads(jsonlines[i])
                 jsonline['sys_ans'] = system_ans
                 jsonline['file'] = folder
                 new_dict_list.append(jsonline)
-            
+
             with open(f'./{eval_system}_eval_input.jsonl', 'a') as f:
                 for json_dict in new_dict_list:
                     f.write(json.dumps(json_dict) + '\n')
@@ -94,11 +103,12 @@ def evaluate(eval_system, resume_id=0):
         question, sys_ans, ref_ans, ref_text = json_dict['question'], json_dict['sys_ans'], json_dict['answer'], json_dict['evidence']
         cur_prompt = eval_prompt.replace('{{question}}', question).replace('{{sys_ans}}', sys_ans).replace('{{ref_ans}}', ref_ans).replace('{{ref_text}}', ref_text)
         response = get_gpt_response_openai(cur_prompt, system_content=system_content)
-        json_dict['eval'] = response
+        json_dict['eval'] = response.strip()
 
         with open(eval_out_dir, 'a') as f:
             f.write(json.dumps(json_dict) + '\n')
         print(f"-Finish {i}-th qa")
+        time.sleep(0.05)
     return
 
 
