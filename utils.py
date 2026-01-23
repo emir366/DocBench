@@ -4,7 +4,7 @@ from secret_key import OPENAI_API_KEY
 
 def get_gpt_response_openai(text, engine='vllm-nvidia-llama-3-3-70b-instruct-fp8', system_content='Your are a helpful assistant.', json_format=False):
     client = OpenAI(
-        base_url="https://kiara.sc.uni-leipzig.de/api", api_key=os.environ.get('KIARA_KEY')
+        base_url=os.environ.get('BASE_URL'), api_key=os.environ.get('CLIENT_API_KEY')
     )
     
     if json_format:

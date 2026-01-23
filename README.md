@@ -1,3 +1,11 @@
+## Purpose of Fork
+
+This fork adapts DocBench to evaluate both local and cloud-based LLMs, with fixes for output alignment and reproducible evaluation.
+Modifications to the source code allow for custom API base URLs, ensuring compatibility with non-OpenAI endpoints.
+
+   
+
+
 # DocBench: A Benchmark for Evaluating LLM-based Document Reading Systems
 Paper Link: _[DocBench: A Benchmark for Evaluating LLM-based Document Reading Systems](https://arxiv.org/pdf/2407.10701)_
 
@@ -21,7 +29,8 @@ Data can be downloaded from: https://drive.google.com/drive/folders/1yxhF1lFF2gK
 
 ## Implementations
 
-We need keys from Hugging Face and OpenAI. (get your own keys to replace the `HF_KEY` and `OPENAI_API_KEY` in `secret_key.py`)
+We need keys from Hugging Face and OpenAI. (get your own keys and set them to the environment variables `HF_KEY` and `OPENAI_API_KEY`). Additionally, you need to set an environment variable called
+'CLIENT_API_KEY' and BASE_URL. If you are running the model via OpenAI, then your OpenAI API key and client API key will be the same.
 
 ### a. Download
 
@@ -34,21 +43,25 @@ bash download.sh
 - ```YOUR_OWN_DIR```: where to save the downloaded models
 - ```MODEL_TO_DOWNLOAD```: model name from hugging face
 
+Alternative options include 
+
 ### b. Run
 
-First, we deploy vLLM as a server:
+First, we create a remote Python environment:
 
-```bash
-python -m vllm.entrypoints.openai.api_server --model your_merged_model_output_path --served-model-name my_model --worker-use-ray --tensor-parallel-size 8 --port 8081 --host 0.0.0.0 --trust-remote-code --max-model-len 8192
+```
+python -m venv docbench-env’
 ```
 
 Second, we run the models for inference:
 
 ```
-python run.py \
-  --system gpt4 \
-  --model_dir MODEL_DIR \	#comment this line if we use api-based models
+python run.py \             
+  --system gpt4_pl \
+  --api_base <API base URL (for local models use: http://localhost:11434/v1)> \
+  --model_name <model name> \
   --initial_folder 0
+
 ```
 
 ### c. Evaluate
@@ -57,7 +70,7 @@ Evaluate the results:
 
 ```bash
 python evaluate.py \
-  --system gpt4 \
+  --system gpt4_pl \
   --resume_id 0
 ```
 
