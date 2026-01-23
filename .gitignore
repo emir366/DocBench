@@ -2,6 +2,8 @@
 .venv/
 venv/
 docbench-env/
+data/
+
 
 # Python cache
 __pycache__/
@@ -12,4 +14,8 @@ __pycache__/
 
 # OS junk
 .DS_Store
+*.bak
+
+# Local files
+*.jsonl
 
