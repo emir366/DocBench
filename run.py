@@ -158,12 +158,17 @@ class Runner:
                     "role": "system", "content": "You are a helpful assistant that helps users answer questions based on the given document.",
                 },
                 {
-                    "role": "system", "content": file_content,
-                },
-                {
-                    "role": "user", "content": q_string,
-                }],
-            ).choices[0].message.content
+                    "role": "user",
+                    "content": (
+                        "DOCUMENT START\n"
+                        f"{file_content}\n"
+                        "DOCUMENT END\n\n"
+                        "Answer the following questions using ONLY the document above:\n"
+                        f"{q_string}"
+                    )
+                }   
+            ]
+        ).choices[0].message.content
         return response
 
 
