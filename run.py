@@ -160,10 +160,9 @@ class Runner:
                 {
                     "role": "user",
                     "content": (
-                        "DOCUMENT START\n"
-                        f"{file_content}\n"
-                        "DOCUMENT END\n\n"
-                        "Answer the following questions using ONLY the document above:\n"
+                        f"Here is the document:\n\n"
+                        f"{file_content}\n\n"
+                        "Questions:\n"
                         f"{q_string}"
                     )
                 }   
