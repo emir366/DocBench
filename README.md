@@ -30,7 +30,12 @@ Data can be downloaded from: https://drive.google.com/drive/folders/1yxhF1lFF2gK
 ## Implementations
 
 We need keys from Hugging Face and OpenAI. (get your own keys and set them to the environment variables `HF_KEY` and `OPENAI_API_KEY`). Additionally, you need to set an environment variable called
-'CLIENT_API_KEY' and BASE_URL. If you are running the model via OpenAI, then your OpenAI API key and client API key will be the same.
+'CLIENT_API_KEY' and BASE_URL. 
+
+Things to be aware of:
+1. If you are running models via OpenAI, then your OpenAI API key and client API key will be the same.
+2. If running models locally, BASE_URL will be http://localhost:11434/v1, and a dummy value can be passed for CLIENT_API_KEY (e.g., 'ollama' if running model via Ollama).
+
 
 ### a. Download
 
