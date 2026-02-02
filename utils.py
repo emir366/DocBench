@@ -17,8 +17,7 @@ def get_gpt_response_openai(text, engine='vllm-nvidia-llama-3-3-70b-instruct-fp8
                     "content": f"You are a helpful assistant designed to output JSON. {system_content}",
                 },
                 {"role": "user", "content": text},
-            ],
-            max_tokens = 1,
+            ]
         )
     else:
         completion = client.chat.completions.create(
