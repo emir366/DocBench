@@ -29,33 +29,26 @@ Data can be downloaded from: https://drive.google.com/drive/folders/1yxhF1lFF2gK
 
 ## Implementations
 
-We need keys from Hugging Face and OpenAI. (get your own keys and set them to the environment variables `HF_KEY` and `OPENAI_API_KEY`). Additionally, you need to set an environment variable called
-'CLIENT_API_KEY' and BASE_URL. 
+We need keys from Hugging Face and OpenAI. (get your own keys and set them to the environment variables `HF_KEY` and `OPENAI_API_KEY`). Additionally, you need to set environment variables called 'CLIENT_API_KEY' and BASE_URL. 
 
 Things to be aware of:
 1. If you are running models via OpenAI, then your OpenAI API key and client API key will be the same.
 2. If running models locally, BASE_URL will be http://localhost:11434/v1, and a dummy value can be passed for CLIENT_API_KEY (e.g., 'ollama' if running model via Ollama).
 
+Prerequisites:
+Make sure you run the command below to have the necessary libraries installed:
+pip install numpy==1.21.6, scipy==1.7.3, and numba==0.55.1 requests, openai, frontend, tools, tiktoken, transformers, tenacity, pymupdf, torch
 
 ### a. Download
 
-Download the models to evaluate: 
-
-```
-bash download.sh
-```
-
-- ```YOUR_OWN_DIR```: where to save the downloaded models
-- ```MODEL_TO_DOWNLOAD```: model name from hugging face
-
-Alternative options include 
+Ensure you have the models that are going to be run either downloaded or ready to run remotely.
 
 ### b. Run
 
 First, we create a remote Python environment:
 
 ```
-python -m venv docbench-env’
+python3 -m venv docbench-env’
 ```
 
 Second, we run the models for inference:
@@ -63,7 +56,7 @@ Second, we run the models for inference:
 ```
 python run.py \             
   --system gpt4_pl \
-  --api_base <API base URL (for local models use: http://localhost:11434/v1)> \
+  --api_base $BASE_URL \
   --model_name <model name> \
   --initial_folder 0
 
