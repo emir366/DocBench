@@ -36,8 +36,9 @@ Things to be aware of:
 2. If running models locally, BASE_URL will be http://localhost:11434/v1, and a dummy value can be passed for CLIENT_API_KEY (e.g., 'ollama' if running model via Ollama).
 
 Prerequisites:
+
 Make sure you run the command below to have the necessary libraries installed:
-pip install numpy==1.21.6, scipy==1.7.3, and numba==0.55.1 requests, openai, frontend, tools, tiktoken, transformers, tenacity, pymupdf, torch
+pip install numpy==1.21.6 scipy==1.7.3 numba==0.55.1 requests openai frontend tools tiktoken transformers tenacity pymupdf torch
 
 ### a. Download
 
