@@ -14,11 +14,12 @@ logger = logging.getLogger(__name__)
 
 
 def check_cleansing(eval_system):
-    all_folders = os.listdir('./data/')
+    all_folders = sorted([f for f in os.listdir('./data/') if f.isdigit()], key=int)
+    system_answers = []
     for folder in all_folders:
-        if os.path.isdir(folder) and not folder.startswith('__') and not folder.startswith('.') and not folder.startswith('data'):
+        if os.path.isdir(f'./data/{folder}') and not folder.startswith('__') and not folder.startswith('.') and not folder.startswith('data'):
+            folder_answers = []
             jsonlines = open(f'./data/{folder}/{folder}_qa.jsonl', 'r').readlines()
-            system_answers = []
             cur_qa_idx = 1
             cur_content = ""
             if eval_system == 'ernie4':
@@ -26,7 +27,7 @@ def check_cleansing(eval_system):
                     for line in f.readlines():
                         line = line.strip()
                         if line != "":
-                            system_answers.append(line)
+                            folder_answers.append(line)
             else:
                 with open(f'./data/{folder}/{eval_system}_results.txt', 'r') as f:
                     for line in f.readlines():
@@ -34,53 +35,39 @@ def check_cleansing(eval_system):
                         if not line.startswith('1.'): pass
                         if line != "":
                             if line.startswith(f'{cur_qa_idx}.'):
-                                cur_content = line
+                                cur_content = line[len(f'{cur_qa_idx}.'):]
                             elif line.startswith(f'{cur_qa_idx+1}.'):
-                                system_answers.append(cur_content)
-                                cur_content = line
+                                folder_answers.append(cur_content)
+                                cur_content = line[len(f'{cur_qa_idx+1}.'):]
                                 cur_qa_idx += 1
                             else:
-                                cur_content += line
-                system_answers.append(cur_content)
+                                cur_content += ' ' + line
+                folder_answers.append(cur_content)
+            system_answers.append(folder_answers)
 
-            if len(system_answers) != len(jsonlines): 
+            if len(folder_answers) != len(jsonlines): 
                 raise Exception(f'Check the {folder}-folder')
 
-    return 
+    return system_answers
 
-def align_eval_input(eval_system):
+def align_eval_input(eval_system, system_answers):
     if os.path.exists(f'./{eval_system}_eval_input.jsonl'): return
-    all_folders = os.listdir('./data/')
-    for folder in all_folders:
-        if os.path.isdir(folder) and not folder.startswith('__') and not folder.startswith('.') and not folder.startswith('data'):
-            system_answers = []
-            with open(f'./data/{folder}/{eval_system}_results.txt', 'r') as f:
-                for line in f.readlines():
-                    line = line.strip()
-                    if line != "":
-                        system_answers.append(line.strip())
-            
-            system_answers = system_answers[1:]
-            system_answers = system_answers[1::2]
-            
-            jsonlines = open(f'./data/{folder}/{folder}_qa.jsonl', 'r').readlines()
-            new_dict_list = []
-            loop_limit = min(len(jsonlines), len(system_answers))
+    folder = 0
+    for sys_answer in system_answers:
+        jsonlines = open(f'./data/{folder}/{folder}_qa.jsonl', 'r').readlines()
+        new_dict_list = []
+        loop_limit = min(len(jsonlines), len(sys_answer))
+        for i in range(loop_limit):
+            system_ans = sys_answer[i]
+            jsonline = json.loads(jsonlines[i])
+            jsonline['sys_ans'] = system_ans
+            jsonline['file'] = folder
+            new_dict_list.append(jsonline)
+        folder += 1
 
-            for i in range(loop_limit):
-                system_ans = system_answers[i]
-                # Clean up any lingering numbering "1. ", "2. " from the answer string
-                # (Just in case the model put numbers on the answers too)
-                system_ans = system_ans.lstrip('0123456789. ').strip()
-                
-                jsonline = json.loads(jsonlines[i])
-                jsonline['sys_ans'] = system_ans
-                jsonline['file'] = folder
-                new_dict_list.append(jsonline)
-
-            with open(f'./{eval_system}_eval_input.jsonl', 'a') as f:
-                for json_dict in new_dict_list:
-                    f.write(json.dumps(json_dict) + '\n')
+        with open(f'./{eval_system}_eval_input.jsonl', 'a') as f:
+            for json_dict in new_dict_list:
+                f.write(json.dumps(json_dict) + '\n')
 
     return
 
@@ -126,15 +113,11 @@ def main():
     resume_id = args.resume_id
 
     if eval_system in ['gpt-4o','gpt4', 'gpt4_pl', 'gpt-4o_pl', 'gpt3.5', 'kimi', 'claude3','glm4', 'qwen2.5', 'ernie4']:
-        check_cleansing(eval_system)
-        align_eval_input(eval_system)
+        system_answers = check_cleansing(eval_system)
+        align_eval_input(eval_system, system_answers)
     evaluate(eval_system, resume_id=resume_id)
 
 
 
 if __name__ == "__main__":
     main()
-
-
-
-
