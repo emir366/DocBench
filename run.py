@@ -57,10 +57,26 @@ class Runner:
     def get_pdfpath_jsonlines_qstr(folder):
         jsonlines = open(f'./data/{folder}/{folder}_qa.jsonl', 'r').readlines()
         pdf_path = glob.glob(f'./data/{folder}/*.pdf')[0]
-        q_string = "Based on the uploaded information, answer the following questions. You should answer all above questions line by line with numerical numbers.\n"
+        num_questions = len(jsonlines)
+        q_string = f"""Answer the following {num_questions} questions based on the document above.
+
+IMPORTANT FORMAT REQUIREMENTS:
+- Answer each question on a separate line
+- Start each answer with the question number followed by a period
+- Give only the answer, no explanations or reasoning
+- You MUST answer ALL {num_questions} questions
+
+Example format:
+1. Paris
+2. 42
+3. Dr. Smith
+
+Questions:
+"""
         for i, line in enumerate(jsonlines):
             question = json.loads(line)['question']
             q_string += f'{i+1}. {question}\n'
+        q_string += f"\nRemember: Answer ALL {num_questions} questions in the exact format shown above."
         qstr_dir = f'./data/{folder}/{folder}_qstring.txt'
         with open(qstr_dir, 'w') as f:
             f.write(q_string)
@@ -101,11 +117,26 @@ class Runner:
                 file_content = encoding.decode(file_content[:120000])
         
         elif self.system == 'gpt4_pl':
-            # gpt-4 tokenizer is used as a proxy, 8000 is a safe limit for local models
+            # Determine token limit based on model
+            # Smaller Ollama models need conservative limits to leave room for output
+            model_limits = {
+                'phi3': 3000,      # phi3:3.8b has ~4K context
+                'gemma': 6000,     # gemma models have ~8K context
+                'llama3': 6000,    # llama3:8b has ~8K context
+                'qwen': 24000,     # qwen3 has ~32K context
+            }
+            # Default limit for unknown models
+            max_tokens = 6000
+            if self.model_name:
+                for model_prefix, limit in model_limits.items():
+                    if model_prefix in self.model_name.lower():
+                        max_tokens = limit
+                        break
+            
             encoding = tiktoken.encoding_for_model('gpt-4') 
             encoded = encoding.encode(file_content)
-            if len(encoded) > 8000:
-                file_content = encoding.decode(encoded[:8000])
+            if len(encoded) > max_tokens:
+                file_content = encoding.decode(encoded[:max_tokens])
 
         elif self.system == 'gpt3.5':
             encoding = tiktoken.encoding_for_model('gpt-3.5-turbo')
@@ -124,7 +155,7 @@ class Runner:
 
         assistant = self.client.beta.assistants.create(
             name="Document Assistant",
-            instructions="You are a helpful assistant that helps users answer questions based on the given document.",
+            instructions="You are a helpful assistant that helps users answer questions based on the given document. Always format your answers as a numbered list where each answer is on its own line in the format: '<number>. [ANSWER]'. Do not include any preamble or additional explanation.",
             model=engine,
             tools=[{"type": "file_search"}],
         )
@@ -154,15 +185,14 @@ class Runner:
 
         response = self.client.chat.completions.create(
             model=model_to_use,
+            max_tokens=2048,  # Ensure enough output space for all answers
             messages=[{
-                    "role": "system", "content": "You are a helpful assistant that helps users answer questions based on the given document.",
+                    "role": "system", "content": "You are a precise assistant. Answer questions concisely with just the answer, no explanations. Format: one numbered answer per line.",
                 },
                 {
                     "role": "user",
                     "content": (
-                        f"Here is the document:\n\n"
-                        f"{file_content}\n\n"
-                        "Questions:\n"
+                        f"Document content:\n{file_content}\n\n"
                         f"{q_string}"
                     )
                 }   
