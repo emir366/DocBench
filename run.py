@@ -65,18 +65,20 @@ IMPORTANT FORMAT REQUIREMENTS:
 - Start each answer with the question number followed by a period
 - Give only the answer, no explanations or reasoning
 - You MUST answer ALL {num_questions} questions
+- If you cannot find the answer, respond with "N/A" for that question
 
 Example format:
 1. Paris
 2. 42
-3. Dr. Smith
+3. N/A
+4. Dr. Smith
 
 Questions:
 """
         for i, line in enumerate(jsonlines):
             question = json.loads(line)['question']
             q_string += f'{i+1}. {question}\n'
-        q_string += f"\nRemember: Answer ALL {num_questions} questions in the exact format shown above."
+        q_string += f"\nRemember: Answer ALL {num_questions} questions in the exact format shown above. Use 'N/A' if you cannot answer."
         qstr_dir = f'./data/{folder}/{folder}_qstring.txt'
         with open(qstr_dir, 'w') as f:
             f.write(q_string)
