@@ -58,27 +58,10 @@ class Runner:
         jsonlines = open(f'./data/{folder}/{folder}_qa.jsonl', 'r').readlines()
         pdf_path = glob.glob(f'./data/{folder}/*.pdf')[0]
         num_questions = len(jsonlines)
-        q_string = f"""Answer the following {num_questions} questions based on the document above.
-
-IMPORTANT FORMAT REQUIREMENTS:
-- Answer each question on a separate line
-- Start each answer with the question number followed by a period
-- Give only the answer, no explanations or reasoning
-- You MUST answer ALL {num_questions} questions
-- If you cannot find the answer, respond with "N/A" for that question
-
-Example format:
-1. Paris
-2. 42
-3. N/A
-4. Dr. Smith
-
-Questions:
-"""
+        q_string = f"Answer ALL {num_questions} questions below. Format: one answer per line as '<number>. <answer>'. If uncertain, provide your best educated guess. Do NOT add any preamble, explanation, or summary — output ONLY the numbered answers.\n\nQuestions:\n"
         for i, line in enumerate(jsonlines):
             question = json.loads(line)['question']
             q_string += f'{i+1}. {question}\n'
-        q_string += f"\nRemember: Answer ALL {num_questions} questions in the exact format shown above. Use 'N/A' if you cannot answer."
         qstr_dir = f'./data/{folder}/{folder}_qstring.txt'
         with open(qstr_dir, 'w') as f:
             f.write(q_string)
@@ -120,25 +103,29 @@ Questions:
         
         elif self.system == 'gpt4_pl':
             # Determine token limit based on model
-            # Smaller Ollama models need conservative limits to leave room for output
+            # Leave room for questions (~500 tokens) and output (~2000 tokens)
+            '''
             model_limits = {
-                'phi3': 3000,      # phi3:3.8b has ~4K context
-                'gemma': 6000,     # gemma models have ~8K context
-                'llama3': 6000,    # llama3:8b has ~8K context
-                'qwen': 24000,     # qwen3 has ~32K context
+                'phi3': 1500,       # phi3:3.8b has ~4K context
+                'gemma': 5000,      # gemma models have ~8K context
+                'llama3': 5000,     # llama3:8b has ~8K context
+                'qwen': 28000,      # qwen3:4b has ~32K context
             }
+            '''
             # Default limit for unknown models
-            max_tokens = 6000
+            max_tokens = 32000
+            '''
             if self.model_name:
                 for model_prefix, limit in model_limits.items():
                     if model_prefix in self.model_name.lower():
                         max_tokens = limit
                         break
-            
+            '''
             encoding = tiktoken.encoding_for_model('gpt-4') 
             encoded = encoding.encode(file_content)
             if len(encoded) > max_tokens:
                 file_content = encoding.decode(encoded[:max_tokens])
+            
 
         elif self.system == 'gpt3.5':
             encoding = tiktoken.encoding_for_model('gpt-3.5-turbo')
@@ -185,9 +172,19 @@ Questions:
             system2model = {'gpt4_pl': 'gpt-4-turbo', 'gpt-4o_pl': 'gpt-4o', 'gpt3.5_pl': 'gpt-3.5-turbo-0125'}
             model_to_use = system2model.get(self.system, self.system)
 
-        response = self.client.chat.completions.create(
+        # Qwen3 uses thinking mode by default, which consumes max_tokens for both
+        # reasoning AND the actual answer. Need higher limit so the model
+        # finishes thinking and produces actual content.
+        extra_body = {}
+        output_tokens = 2048
+        if self.model_name and 'qwen' in self.model_name.lower():
+            extra_body = {"think": False}
+            output_tokens = 8192
+
+        completion = self.client.chat.completions.create(
             model=model_to_use,
-            max_tokens=2048,  # Ensure enough output space for all answers
+            max_tokens=output_tokens,
+            extra_body=extra_body,
             messages=[{
                     "role": "system", "content": "You are a precise assistant. Answer questions concisely with just the answer, no explanations. Format: one numbered answer per line.",
                 },
@@ -199,7 +196,8 @@ Questions:
                     )
                 }   
             ]
-        ).choices[0].message.content
+        )
+        response = completion.choices[0].message.content or ""
         return response
 
 
