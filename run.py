@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 import glob
+import time
 import requests
 from openai import OpenAI
 import fitz
@@ -17,10 +18,11 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s -   %(message
 logger = logging.getLogger(__name__)
 
 class Runner:
-    def __init__(self, system, client, model_name=None):
+    def __init__(self, system, client, model_name=None, api_base=None):
         self.system = system
         self.client = client
         self.model_name = model_name
+        self.api_base = api_base
     
     @classmethod
     def from_type(cls, system_name, api_base=None, model_name=None):
@@ -36,7 +38,7 @@ class Runner:
 
         # Create OpenAI client
         client = OpenAI(**client_kwargs)
-        return cls(system_name, client, model_name)
+        return cls(system_name, client, model_name, api_base)
 
     def run(self, folder):
         pdf_path, q_string = self.get_pdfpath_jsonlines_qstr(folder)
@@ -46,7 +48,15 @@ class Runner:
             response = self.get_gpt4file_request(file_content, q_string)
         else:
             file_content = self.truncate(file_content)
-            response = self.get_gpt_pl_request(file_content, q_string)
+            # Use Ollama native API if api_base points to Ollama
+            if self.api_base and self.model_name:
+                response, metrics = self.get_ollama_request(file_content, q_string)
+                metrics_dir = f'./data/{folder}/{self.system}_metrics.json'
+                with open(metrics_dir, 'w') as f:
+                    json.dump(metrics, f, indent=2)
+                logger.info(f"Folder {folder} | TTFT: {metrics['ttft_seconds']:.3f}s | TPS: {metrics['tps']:.1f} tok/s | Output tokens: {metrics['output_tokens']}")
+            else:
+                response = self.get_gpt_pl_request(file_content, q_string)
 
         result_dir = f'./data/{folder}/{self.system}_results.txt'
         with open(result_dir, 'w') as f:
@@ -102,25 +112,8 @@ class Runner:
                 file_content = encoding.decode(file_content[:120000])
         
         elif self.system == 'gpt4_pl':
-            # Determine token limit based on model
-            # Leave room for questions (~500 tokens) and output (~2000 tokens)
-            '''
-            model_limits = {
-                'phi3': 1500,       # phi3:3.8b has ~4K context
-                'gemma': 5000,      # gemma models have ~8K context
-                'llama3': 5000,     # llama3:8b has ~8K context
-                'qwen': 28000,      # qwen3:4b has ~32K context
-            }
-            '''
-            # Default limit for unknown models
+            # Default limit
             max_tokens = 32000
-            '''
-            if self.model_name:
-                for model_prefix, limit in model_limits.items():
-                    if model_prefix in self.model_name.lower():
-                        max_tokens = limit
-                        break
-            '''
             encoding = tiktoken.encoding_for_model('gpt-4') 
             encoded = encoding.encode(file_content)
             if len(encoded) > max_tokens:
@@ -186,7 +179,7 @@ class Runner:
             max_tokens=output_tokens,
             extra_body=extra_body,
             messages=[{
-                    "role": "system", "content": "You are a precise assistant. Answer questions concisely with just the answer, no explanations. Format: one numbered answer per line.",
+                    "role": "system", "content": "You are a helpful assistant that helps users answer questions based on the given document. Always format your answers as a numbered list where each answer is on its own line in the format: '<number>. [ANSWER]'. Do not include any preamble or additional explanation.",
                 },
                 {
                     "role": "user",
@@ -199,6 +192,85 @@ class Runner:
         )
         response = completion.choices[0].message.content or ""
         return response
+
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
+    def get_ollama_request(self, file_content, q_string):
+        """Use Ollama's native /api/chat with streaming for true TTFT and TPS."""
+        model_to_use = self.model_name
+        ollama_url = self.api_base.rstrip('/')
+        # Remove /v1 suffix if present (user may pass OpenAI-compatible URL)
+        if ollama_url.endswith('/v1'):
+            ollama_url = ollama_url[:-3]
+
+        payload = {
+            "model": model_to_use,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant that helps users answer questions based on the given document. Always format your answers as a numbered list where each answer is on its own line in the format: '<number>. [ANSWER]'. Do not include any preamble or additional explanation."},
+                {"role": "user", "content": f"Document content:\n{file_content}\n\n{q_string}"}
+            ],
+            "stream": True,
+            "options": {"num_predict": 2048}
+        }
+        # Disable thinking mode for qwen3 models
+        if 'qwen' in model_to_use.lower():
+            payload["think"] = False
+            payload["options"]["num_predict"] = 8192
+
+        # Stream response and measure true TTFT
+        start_time = time.perf_counter()
+        resp = requests.post(f"{ollama_url}/api/chat", json=payload, stream=True, timeout=2400)
+        resp.raise_for_status()
+
+        content_parts = []
+        ttft = None
+        final_data = None
+
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            chunk = json.loads(line)
+
+            # Record TTFT on first chunk with content
+            if ttft is None and chunk.get("message", {}).get("content", ""):
+                ttft = time.perf_counter() - start_time
+
+            # Accumulate content
+            content_parts.append(chunk.get("message", {}).get("content", ""))
+
+            # Final chunk contains timing metrics
+            if chunk.get("done", False):
+                final_data = chunk
+                break
+
+        total_time = time.perf_counter() - start_time
+        response_text = "".join(content_parts)
+
+        # Strip thinking content if present (qwen3 may include <think>...</think>)
+        if "</think>" in response_text:
+            response_text = response_text.split("</think>")[-1].strip()
+
+        # Extract Ollama's built-in metrics
+        metrics = {
+            "ttft_seconds": ttft or total_time,
+            "tps": 0.0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "eval_duration_seconds": 0.0,
+            "prompt_eval_duration_seconds": 0.0,
+            "total_duration_seconds": total_time,
+        }
+        if final_data:
+            eval_duration = final_data.get("eval_duration", 0)
+            eval_count = final_data.get("eval_count", 0)
+            prompt_eval_duration = final_data.get("prompt_eval_duration", 0)
+            metrics["input_tokens"] = final_data.get("prompt_eval_count", 0)
+            metrics["output_tokens"] = eval_count
+            metrics["eval_duration_seconds"] = eval_duration / 1e9
+            metrics["prompt_eval_duration_seconds"] = prompt_eval_duration / 1e9
+            if eval_duration > 0:
+                metrics["tps"] = eval_count / (eval_duration / 1e9)
+
+        return response_text, metrics
 
 
 class Runner_OSS:
