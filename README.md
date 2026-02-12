@@ -1,7 +1,10 @@
-## Purpose of Fork
+# Purpose of Fork
 
-This fork adapts DocBench to evaluate both local and cloud-based LLMs, with fixes for output alignment and reproducible evaluation.
+This fork adapts DocBench to evaluate both local Ollama models and cloud-based LLMs via Kiara.
 Modifications to the source code allow for custom API base URLs, ensuring compatibility with non-OpenAI endpoints.
+The collection of the metrics Tokens Per Second (TPS) and Time To First Token (TTFT) is also added to the evaluation.
+It also includes fixes for output alignment and reproducible evaluation.
+
 
    
 
@@ -27,18 +30,31 @@ The construction pipeline consists of three pahses: (a) Document Collection; (b)
 
 Data can be downloaded from: https://drive.google.com/drive/folders/1yxhF1lFF2gKeTNc8Wh0EyBdMT3M4pDYr?usp=sharing
 
-## Implementations
+## Prerequisites
 
-We need keys from Hugging Face and OpenAI. (get your own keys and set them to the environment variables `HF_KEY` and `OPENAI_API_KEY`). Additionally, you need to set environment variables called 'CLIENT_API_KEY' and BASE_URL. 
+We need keys from Hugging Face and OpenAI. (get your own keys and set them to the environment variables `HF_KEY` and `OPENAI_API_KEY`). 
+Additionally, you need to set environment variables `CLIENT_API_KEY` and `BASE_URL`. 
 
-Things to be aware of:
-1. If you are running models via OpenAI, then your OpenAI API key and client API key will be the same.
-2. If running models locally, BASE_URL will be http://localhost:11434/v1, and a dummy value can be passed for CLIENT_API_KEY (e.g., 'ollama' if running model via Ollama).
+### For local Ollama models 
+`BASE_URL` will be 'http://localhost:11434/v1', and a dummy value can be passed for `CLIENT_API_KEY` (e.g., 'ollama')
 
-Prerequisites:
+### For remote models via Kiara
+`BASE_URL` will be the Kiara API endpoint, and you need to set `CLIENT_API_KEY` to your Kiara API key.
 
-Make sure you run the command below to have the necessary libraries installed:
+### For remote models via OpenAI
+`BASE_URL` will be the OpenAI API endpoint, and you need to set `CLIENT_API_KEY` to your OpenAI API key. Note that in this case, `CLIENT_API_KEY` and `OPENAI_API_KEY` will be the same.
+
+
+Next, create a remote Python environment:
+
+```bash
+python3 -m venv docbench-env’
+```
+
+Install the necessary libraries:
+```bash
 pip install numpy==1.21.6 scipy==1.7.3 numba==0.55.1 requests openai frontend tools tiktoken transformers tenacity pymupdf torch
+```
 
 ### a. Download
 
@@ -46,15 +62,9 @@ Ensure you have the models that are going to be run either downloaded or ready t
 
 ### b. Run
 
-First, we create a remote Python environment:
+Run the model for inference:
 
-```
-python3 -m venv docbench-env’
-```
-
-Second, we run the models for inference:
-
-```
+```bash
 python run.py \             
   --system gpt4_pl \
   --api_base $BASE_URL \

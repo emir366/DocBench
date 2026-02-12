@@ -9,7 +9,7 @@ from openai import OpenAI
 import fitz
 import tiktoken
 from transformers import AutoTokenizer
-from secret_key import OPENAI_API_KEY
+from secret_key import OPENAI_API_KEY, CLIENT_API_KEY
 from tenacity import retry, stop_after_attempt, wait_random_exponential  # for exponential backoff
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -18,14 +18,15 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(name)s -   %(message
 logger = logging.getLogger(__name__)
 
 class Runner:
-    def __init__(self, system, client, model_name=None, api_base=None):
+    def __init__(self, system, client, model_name=None, api_base=None, kiara_api_key=None):
         self.system = system
         self.client = client
         self.model_name = model_name
         self.api_base = api_base
+        self.kiara_api_key = kiara_api_key
     
     @classmethod
-    def from_type(cls, system_name, api_base=None, model_name=None):
+    def from_type(cls, system_name, api_base=None, model_name=None, kiara_api_key=None):
         client_kwargs = {"api_key": OPENAI_API_KEY}
 
         # Allow overriding API base (for Ollama or custom endpoints)
@@ -38,7 +39,7 @@ class Runner:
 
         # Create OpenAI client
         client = OpenAI(**client_kwargs)
-        return cls(system_name, client, model_name, api_base)
+        return cls(system_name, client, model_name, api_base, kiara_api_key)
 
     def run(self, folder):
         pdf_path, q_string = self.get_pdfpath_jsonlines_qstr(folder)
@@ -48,13 +49,24 @@ class Runner:
             response = self.get_gpt4file_request(file_content, q_string)
         else:
             file_content = self.truncate(file_content)
-            # Use Ollama native API if api_base points to Ollama
-            if self.api_base and self.model_name:
-                response, metrics = self.get_ollama_request(file_content, q_string)
-                metrics_dir = f'./data/{folder}/{self.system}_metrics.json'
-                with open(metrics_dir, 'w') as f:
-                    json.dump(metrics, f, indent=2)
-                logger.info(f"Folder {folder} | TTFT: {metrics['ttft_seconds']:.3f}s | TPS: {metrics['tps']:.1f} tok/s | Output tokens: {metrics['output_tokens']}")
+            if (self.api_base).startswith("http://localhost"):
+                # Use Ollama native API if api_base points to Ollama
+                if self.model_name:
+                    response, metrics = self.get_ollama_request(file_content, q_string)
+                    metrics_dir = f'./data/{folder}/{self.system}_metrics.json'
+                    with open(metrics_dir, 'w') as f:
+                        json.dump(metrics, f, indent=2)
+                    logger.info(f"Folder {folder} | TTFT: {metrics['ttft_seconds']:.3f}s | TPS: {metrics['tps']:.1f} tok/s | Output tokens: {metrics['output_tokens']}")
+                
+            # Use Kiara (Open WebUI) API with streaming metrics
+            elif (self.api_base).startswith("https://kiara"):
+                if self.kiara_api_key and self.model_name:
+                    response, metrics = self.get_kiara_request(file_content, q_string)
+                    metrics_dir = f'./data/{folder}/{self.system}_metrics.json'
+                    with open(metrics_dir, 'w') as f:
+                        json.dump(metrics, f, indent=2)
+                    logger.info(f"Folder {folder} | TTFT: {metrics['ttft_seconds']:.3f}s | TPS: {metrics['tps']:.1f} tok/s | Output tokens: {metrics['output_tokens']}")
+            
             else:
                 response = self.get_gpt_pl_request(file_content, q_string)
 
@@ -113,7 +125,7 @@ class Runner:
         
         elif self.system == 'gpt4_pl':
             # Default limit
-            max_tokens = 32000
+            max_tokens = 12000
             encoding = tiktoken.encoding_for_model('gpt-4') 
             encoded = encoding.encode(file_content)
             if len(encoded) > max_tokens:
@@ -218,7 +230,7 @@ class Runner:
 
         # Stream response and measure true TTFT
         start_time = time.perf_counter()
-        resp = requests.post(f"{ollama_url}/api/chat", json=payload, stream=True, timeout=2400)
+        resp = requests.post(f"{ollama_url}/chat", json=payload, stream=True, timeout=2400)
         resp.raise_for_status()
 
         content_parts = []
@@ -269,6 +281,115 @@ class Runner:
             metrics["prompt_eval_duration_seconds"] = prompt_eval_duration / 1e9
             if eval_duration > 0:
                 metrics["tps"] = eval_count / (eval_duration / 1e9)
+
+        return response_text, metrics
+
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
+    def get_kiara_request(self, file_content, q_string):
+        """Use Kiara (Open WebUI) OpenAI-compatible streaming for client-side TTFT and TPS."""
+        model_to_use = self.model_name
+        kiara_url = self.api_base.rstrip('/')
+
+        payload = {
+            "model": model_to_use,
+            "messages": [
+                {"role": "system", "content": "You are a helpful assistant that helps users answer questions based on the given document. Always format your answers as a numbered list where each answer is on its own line in the format: '<number>. [ANSWER]'. Do not include any preamble or additional explanation."},
+                {"role": "user", "content": f"Document content:\n{file_content}\n\n{q_string}"}
+            ],
+            "stream": True,
+            "max_tokens": 2048,
+        }
+
+        headers = {
+            "Authorization": f"Bearer {self.kiara_api_key}",
+            "Content-Type": "application/json",
+        }
+
+        # Stream response and measure client-side TTFT
+        start_time = time.perf_counter()
+        resp = requests.post(
+            f"{kiara_url}/chat/completions",
+            json=payload, headers=headers, stream=True, timeout=2400
+        )
+        if resp.status_code != 200:
+            logger.error(f"Kiara API error {resp.status_code}: {resp.text[:500]}")
+            resp.raise_for_status()
+
+        content_parts = []
+        ttft = None
+        token_count = 0
+        first_token_time = None
+        last_token_time = None
+        debug_chunks = []  # capture first few chunks for debugging
+        finish_reason = None
+
+        for line in resp.iter_lines():
+            if not line:
+                continue
+            line_str = line.decode('utf-8', errors='replace')
+            # SSE format: "data: {...}" or "data: [DONE]"
+            if not line_str.startswith('data: '):
+                continue
+            data_str = line_str[6:]  # strip "data: " prefix
+            if data_str.strip() == '[DONE]':
+                break
+
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+            # Capture first 3 chunks for debugging empty responses
+            if len(debug_chunks) < 3:
+                debug_chunks.append(chunk)
+
+            # Extract content delta
+            delta_content = ""
+            choices = chunk.get("choices", [])
+            if choices:
+                delta = choices[0].get("delta", {})
+                delta_content = delta.get("content", "") or ""
+                # Track finish_reason
+                fr = choices[0].get("finish_reason")
+                if fr:
+                    finish_reason = fr
+
+            if delta_content:
+                now = time.perf_counter()
+                # Record TTFT on first content chunk
+                if ttft is None:
+                    ttft = now - start_time
+                    first_token_time = now
+                last_token_time = now
+                token_count += 1
+                content_parts.append(delta_content)
+
+        total_time = time.perf_counter() - start_time
+        response_text = "".join(content_parts)
+
+        # Log debug info if response is empty
+        if token_count == 0:
+            logger.warning(f"Empty response from Kiara. finish_reason={finish_reason}")
+            for i, dc in enumerate(debug_chunks):
+                logger.warning(f"  Debug chunk {i}: {json.dumps(dc)[:300]}")
+
+        # Strip thinking content if present
+        if "</think>" in response_text:
+            response_text = response_text.split("</think>")[-1].strip()
+
+        # Compute client-side metrics
+        # TPS = tokens / generation_time (excludes TTFT/prompt processing)
+        generation_time = (last_token_time - first_token_time) if (first_token_time and last_token_time and last_token_time > first_token_time) else total_time
+        tps = token_count / generation_time if generation_time > 0 else 0.0
+
+        metrics = {
+            "ttft_seconds": ttft or total_time,
+            "tps": tps,
+            "output_tokens": token_count,
+            "total_duration_seconds": total_time,
+            "generation_duration_seconds": generation_time,
+            "source": "kiara_client_side",
+        }
 
         return response_text, metrics
 
@@ -348,12 +469,16 @@ def main():
     parser.add_argument("--total_folder_number", type=int, default=228, help="Total pdf folders.")
     parser.add_argument("--api_base", type=str, default=None, help="Custom API base URL (e.g., http://localhost:11434/v1/).")
     parser.add_argument("--model_name", type=str, default=None, help="Custom model name (e.g., gemma3n:e2b).")
+    parser.add_argument("--kiara_api_key", type=str, default=None, help="Kiara (Open WebUI) API key. Falls back to CLIENT_API_KEY env var.")
 
     args = parser.parse_args()
     system = args.system
 
+    # Resolve Kiara API key: CLI flag > env var
+    kiara_key = args.kiara_api_key or CLIENT_API_KEY
+
     if 'gpt' in system:
-        runner = Runner.from_type(system, api_base=args.api_base, model_name=args.model_name)
+        runner = Runner.from_type(system, api_base=args.api_base, model_name=args.model_name, kiara_api_key=kiara_key)
     else:
         runner = Runner_OSS.from_type(system, args.model_dir)
 
