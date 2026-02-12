@@ -230,7 +230,7 @@ class Runner:
 
         # Stream response and measure true TTFT
         start_time = time.perf_counter()
-        resp = requests.post(f"{ollama_url}/chat", json=payload, stream=True, timeout=2400)
+        resp = requests.post(f"{ollama_url}/api/chat", json=payload, stream=True, timeout=2400)
         resp.raise_for_status()
 
         content_parts = []
