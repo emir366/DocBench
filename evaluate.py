@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 def check_cleansing(eval_system):
     all_folders = sorted([f for f in os.listdir('./data/') if f.isdigit()], key=int)
     system_answers = []
+    invalid_folders = []
     for folder in all_folders:
         if os.path.isdir(f'./data/{folder}') and not folder.startswith('__') and not folder.startswith('.') and not folder.startswith('data'):
             folder_answers = []
@@ -30,10 +31,15 @@ def check_cleansing(eval_system):
                             folder_answers.append(line)
             else:
                 with open(f'./data/{folder}/{eval_system}_results.txt', 'r') as f:
+                    num_questions = len(jsonlines)
                     for line in f.readlines():
                         line = line.strip()
                         if not line.startswith('1.'): pass
+                        if line == "" and cur_qa_idx == num_questions:
+                            break
                         if line != "":
+                            if line.startswith('### Summary') or line.startswith('**Summary'):
+                                break
                             if line.startswith(f'{cur_qa_idx}.'):
                                 cur_content = line[len(f'{cur_qa_idx}.'):]
                             elif line.startswith(f'{cur_qa_idx+1}.'):
@@ -43,17 +49,20 @@ def check_cleansing(eval_system):
                             else:
                                 cur_content += ' ' + line
                 folder_answers.append(cur_content)
-            system_answers.append(folder_answers)
+            
+            if len(folder_answers) != len(jsonlines):
+                invalid_folders.append(folder)
+            else:
+                system_answers.append(folder_answers)
 
-            if len(folder_answers) != len(jsonlines): 
-                raise Exception(f'Check the {folder}-folder')
+    return system_answers, invalid_folders
 
-    return system_answers
-
-def align_eval_input(eval_system, system_answers):
+def align_eval_input(eval_system, system_answers, invalid_folders):
     if os.path.exists(f'./{eval_system}_eval_input.jsonl'): return
-    folder = 0
-    for sys_answer in system_answers:
+    all_folders = sorted([f for f in os.listdir('./data/') if f.isdigit()], key=int)
+    valid_folders = [f for f in all_folders if f not in invalid_folders and os.path.isdir(f'./data/{f}')]
+
+    for folder, sys_answer in zip(valid_folders, system_answers):
         jsonlines = open(f'./data/{folder}/{folder}_qa.jsonl', 'r').readlines()
         new_dict_list = []
         loop_limit = min(len(jsonlines), len(sys_answer))
@@ -63,7 +72,6 @@ def align_eval_input(eval_system, system_answers):
             jsonline['sys_ans'] = system_ans
             jsonline['file'] = folder
             new_dict_list.append(jsonline)
-        folder += 1
 
         with open(f'./{eval_system}_eval_input.jsonl', 'a') as f:
             for json_dict in new_dict_list:
@@ -112,10 +120,15 @@ def main():
     eval_system = args.system
     resume_id = args.resume_id
 
+    invalid_folders = []
     if eval_system in ['gpt-4o','gpt4', 'gpt4_pl', 'gpt-4o_pl', 'gpt3.5', 'kimi', 'claude3','glm4', 'qwen2.5', 'ernie4']:
-        system_answers = check_cleansing(eval_system)
-        align_eval_input(eval_system, system_answers)
+        system_answers, invalid_folders = check_cleansing(eval_system)
+        align_eval_input(eval_system, system_answers, invalid_folders)
     evaluate(eval_system, resume_id=resume_id)
+    print("Invalid folders: ")
+    for folder in invalid_folders:
+        print(f"Invalid folder: {folder}")
+    print(f"Total invalid folders: {len(invalid_folders)}")
 
 
 
